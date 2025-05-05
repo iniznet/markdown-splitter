@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Markdown Splitter</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        line-height: 1.6;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+        background-color: #f4f4f4;
+      }
+      .container {
+        background-color: #fff;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        text-align: center;
+        color: #333;
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: bold;
+        color: #555;
+      }
+      input[type="file"],
+      input[type="number"],
+      button {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 20px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box; /* Include padding in width */
+      }
+      input[type="file"] {
+        padding: 5px; /* Adjust padding for file input */
+      }
+      button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        cursor: pointer;
+        font-size: 1em;
+        transition: background-color 0.3s ease;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+      #results {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+      }
+      #results h2 {
+        margin-bottom: 15px;
+        color: #333;
+      }
+      #results p {
+        margin-bottom: 10px;
+        color: #666;
+      }
+      #results a {
+        display: inline-block;
+        margin-right: 10px;
+        margin-bottom: 10px;
+        padding: 8px 15px;
+        background-color: #28a745;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: background-color 0.3s ease;
+      }
+      #results a:hover {
+        background-color: #218838;
+      }
+      .error {
+        color: #dc3545;
+        font-weight: bold;
+        margin-bottom: 15px;
+      }
+      #downloadAll {
+        display: none;
+        margin-top: 15px;
+        background-color: #6c757d;
+        width: 100%;
+      }
+      #downloadAll:hover {
+        background-color: #5a6268;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Markdown Splitter</h1>
+      <p>
+        Upload a Markdown file and specify an approximate token (word) limit
+        per chunk. The tool will split the file, ensuring splits don't occur
+        inside code blocks (```...```) and preferably happen after them.
+      </p>
+
+      <div>
+        <label for="markdownFile">Select Markdown File:</label>
+        <input type="file" id="markdownFile" accept=".md, .markdown, .txt" />
+      </div>
+
+      <div>
+        <label for="tokenLimit">Approximate Token Limit per Chunk:</label>
+        <input type="number" id="tokenLimit" value="500" min="1" />
+      </div>
+
+      <button id="splitButton">Split Markdown</button>
+
+      <div id="results">
+        <h2>Results</h2>
+        <p id="status">Upload a file and click "Split Markdown".</p>
+        <div id="downloadLinks"></div>
+        <button id="downloadAll" style="display: none;">Download All Parts (ZIP)</button>
+      </div>
+    </div>
+
+    <!-- Add JSZip library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <script>
+      const fileInput = document.getElementById("markdownFile");
+      const tokenLimitInput = document.getElementById("tokenLimit");
+      const splitButton = document.getElementById("splitButton");
+      const resultsDiv = document.getElementById("results");
+      const statusP = document.getElementById("status");
+      const downloadLinksDiv = document.getElementById("downloadLinks");
+      const downloadAllButton = document.getElementById("downloadAll");
+      
+      // Store chunks for download all functionality
+      let allChunks = [];
+      let originalFileName = "";
+
+      // Basic token counter (counts words separated by whitespace)
+      function countTokens(text) {
+        if (!text) return 0;
+        // Split by any whitespace character
+        const words = text.trim().split(/\s+/);
+        // Filter out empty strings that might result from multiple spaces
+        return words.filter((word) => word.length > 0).length;
+      }
+
+      function splitMarkdownLogic(markdownContent, tokenLimit, originalFilename) {
+        originalFileName = originalFilename;
+        const lines = markdownContent.split("\n");
+        const chunks = [];
+        let currentChunkLines = [];
+        let currentTokenCount = 0;
+        let inCodeBlock = false;
+        const codeFencePattern = /^\s*```/; // Regex to detect ```
+
+        lines.forEach((line) => {
+          // Check for code fence toggle
+          if (codeFencePattern.test(line)) {
+            inCodeBlock = !inCodeBlock;
+          }
+
+          // Add line to current chunk
+          currentChunkLines.push(line);
+          // Only count tokens if not just whitespace
+          if (line.trim().length > 0) {
+              currentTokenCount += countTokens(line);
+          }
+
+
+          // --- Splitting Logic ---
+          // Check if we've exceeded the token limit AND are NOT inside a code block
+          // Also ensure the chunk has content before splitting
+          if (
+            currentTokenCount >= tokenLimit &&
+            !inCodeBlock &&
+            currentChunkLines.length > 0
+          ) {
+            // We have a potential split point.
+            chunks.push(currentChunkLines.join("\n"));
+            // Reset for the next chunk
+            currentChunkLines = [];
+            currentTokenCount = 0;
+          }
+        });
+
+        // Add the last remaining chunk if any lines are left
+        if (currentChunkLines.length > 0) {
+          chunks.push(currentChunkLines.join("\n"));
+        }
+
+        // --- Prepare results for download ---
+        downloadLinksDiv.innerHTML = ""; // Clear previous links
+        downloadAllButton.style.display = "none"; // Hide download all button by default
+        allChunks = []; // Reset chunks array
+
+        if (chunks.length === 0 && markdownContent.trim().length === 0) {
+            statusP.textContent = "Input file appears to be empty. No chunks generated.";
+            return;
+        }
+
+        if (chunks.length <= 1 && markdownContent.trim().length > 0) {
+          statusP.textContent = `Content is smaller than the token limit (${tokenLimit}) or only one chunk needed. Generating single download link.`;
+          // Generate a single download link even if no split occurred
+          const content = chunks[0] || markdownContent;
+          allChunks.push({content: content, filename: originalFilename});
+          generateDownloadLink(content, originalFilename, 1, 1);
+          return;
+        }
+
+        statusP.textContent = `Successfully split into ${chunks.length} chunks.`;
+        chunks.forEach((chunkContent, index) => {
+          // Create filename for this chunk
+          const base = originalFilename.replace(/\.[^/.]+$/, ""); // Remove extension
+          const ext = originalFilename.includes('.') ? originalFilename.substring(originalFilename.lastIndexOf('.')) : '.md';
+          const chunkFilename = `${base}_part_${index + 1}${ext}`;
+          
+          // Save chunk for download all functionality
+          allChunks.push({content: chunkContent, filename: chunkFilename});
+          
+          generateDownloadLink(chunkContent, originalFilename, index + 1, chunks.length);
+        });
+        
+        // Show download all button if we have multiple chunks
+        if (chunks.length > 1) {
+          downloadAllButton.style.display = "block";
+        }
+      }
+
+      function generateDownloadLink(content, originalFilename, partNum, totalParts) {
+          const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+
+          // Create filename
+          const base = originalFilename.replace(/\.[^/.]+$/, ""); // Remove extension
+          const ext = originalFilename.includes('.') ? originalFilename.substring(originalFilename.lastIndexOf('.')) : '.md'; // Get extension or default to .md
+          const downloadFilename = totalParts > 1 ? `${base}_part_${partNum}${ext}` : originalFilename; // Add _part_N only if splitting occurred
+
+          link.download = downloadFilename;
+          link.textContent = `Download Part ${partNum}`;
+          downloadLinksDiv.appendChild(link);
+      }
+
+
+      splitButton.addEventListener("click", () => {
+        const file = fileInput.files[0];
+        const tokenLimit = parseInt(tokenLimitInput.value, 10);
+
+        // Clear previous results and errors
+        downloadLinksDiv.innerHTML = "";
+        statusP.textContent = "Processing...";
+        resultsDiv.querySelectorAll(".error").forEach(el => el.remove()); // Remove old errors
+
+        // --- Input Validation ---
+        let hasError = false;
+        if (!file) {
+          const errorMsg = document.createElement("p");
+          errorMsg.className = "error";
+          errorMsg.textContent = "Error: Please select a Markdown file.";
+          resultsDiv.insertBefore(errorMsg, statusP);
+          statusP.textContent = "Upload failed.";
+          hasError = true;
+        }
+        if (isNaN(tokenLimit) || tokenLimit <= 0) {
+          const errorMsg = document.createElement("p");
+          errorMsg.className = "error";
+          errorMsg.textContent = "Error: Token limit must be a positive number.";
+          resultsDiv.insertBefore(errorMsg, statusP);
+           if (!hasError) statusP.textContent = "Invalid input."; // Avoid overwriting file error
+          hasError = true;
+        }
+
+        if (hasError) {
+            splitButton.disabled = false; // Re-enable button on error
+            return;
+        }
+
+        splitButton.disabled = true; // Disable button during processing
+
+        // --- File Reading ---
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const markdownContent = event.target.result;
+            splitMarkdownLogic(markdownContent, tokenLimit, file.name);
+          } catch (error) {
+              console.error("Error during splitting:", error);
+              statusP.textContent = `An error occurred during processing: ${error.message}`;
+              const errorMsg = document.createElement("p");
+              errorMsg.className = "error";
+              errorMsg.textContent = `Error: ${error.message}`;
+              resultsDiv.insertBefore(errorMsg, statusP);
+          } finally {
+              splitButton.disabled = false; // Re-enable button
+          }
+        };
+
+        reader.onerror = (event) => {
+          console.error("File reading error:", event.target.error);
+          statusP.textContent = `Error reading file: ${event.target.error}`;
+           const errorMsg = document.createElement("p");
+           errorMsg.className = "error";
+           errorMsg.textContent = `Error: Could not read the selected file.`;
+           resultsDiv.insertBefore(errorMsg, statusP);
+          splitButton.disabled = false; // Re-enable button
+        };
+
+        reader.readAsText(file); // Read the file as text
+      });
+
+      // Add event listener for Download All button
+      downloadAllButton.addEventListener("click", async () => {
+        if (allChunks.length === 0) {
+          alert("No content to download!");
+          return;
+        }
+        
+        try {
+          const zip = new JSZip();
+          
+          // Add all files to the zip
+          allChunks.forEach(chunk => {
+            zip.file(chunk.filename, chunk.content);
+          });
+          
+          // Generate the zip file
+          const base = originalFileName.replace(/\.[^/.]+$/, "");
+          const zipBlob = await zip.generateAsync({type: "blob"});
+          
+          // Create download link
+          const url = URL.createObjectURL(zipBlob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `${base}_all_parts.zip`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.error("Error creating ZIP file:", error);
+          alert("Error creating ZIP file: " + error.message);
+        }
+      });
+    </script>
+  </body>
+</html>
